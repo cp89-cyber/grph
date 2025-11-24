@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nova Graphing Calculator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/mathjs@11.11.1/lib/browser/math.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
+  <style>
+    :root {
+      --bg: #0b1021;
+      --panel: rgba(255, 255, 255, 0.06);
+      --panel-strong: rgba(255, 255, 255, 0.12);
+      --text: #f4f6fb;
+      --muted: #9aa6c8;
+      --accent: #7cf0c5;
+      --accent-2: #f6c177;
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Space Grotesk", system-ui, -apple-system, sans-serif;
+      color: var(--text);
+      background: radial-gradient(120% 120% at 10% 10%, rgba(124, 240, 197, 0.22), transparent 40%),
+        radial-gradient(120% 120% at 90% 0%, rgba(246, 193, 119, 0.18), transparent 40%),
+        radial-gradient(120% 120% at 50% 100%, rgba(84, 112, 255, 0.18), transparent 45%),
+        var(--bg);
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      padding: 32px 20px 48px;
+    }
+
+    .shell {
+      width: min(1200px, 100%);
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 18px;
+    }
+
+    header {
+      background: var(--panel);
+      border: 1px solid var(--panel-strong);
+      border-radius: 18px;
+      padding: 20px 24px;
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: clamp(26px, 4vw, 32px);
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .badge {
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: var(--accent-2);
+      font-size: 12px;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+
+    .lede {
+      margin: 0;
+      color: var(--muted);
+      max-width: 620px;
+      line-height: 1.5;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--panel-strong);
+      border-radius: 16px;
+      padding: 18px 18px 16px;
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .card h2 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: -0.01em;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    input[type="text"],
+    input[type="number"],
+    select {
+      width: 100%;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      color: var(--text);
+      border-radius: 12px;
+      padding: 11px 12px;
+      font-size: 15px;
+      transition: border 0.2s ease, transform 0.2s ease;
+    }
+
+    input:focus,
+    select:focus {
+      outline: none;
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 10px;
+      align-items: center;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      cursor: pointer;
+      border: none;
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 15px;
+      font-weight: 600;
+      color: #0b0f1a;
+      background: linear-gradient(120deg, var(--accent), #9cf0f4);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+      transition: transform 0.15s ease, box-shadow 0.2s ease;
+    }
+
+    button.secondary {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow: none;
+    }
+
+    button:hover {
+      transform: translateY(-1px) scale(1.01);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+    }
+
+    .pill-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .pill {
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 14px;
+      transition: border 0.2s ease, transform 0.15s ease;
+    }
+
+    .pill:hover {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+
+    .result {
+      font-size: 15px;
+      color: var(--accent);
+      font-weight: 600;
+      min-height: 22px;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .plot-shell {
+      background: var(--panel);
+      border: 1px solid var(--panel-strong);
+      border-radius: 18px;
+      padding: 12px;
+      box-shadow: var(--shadow);
+      min-height: 320px;
+    }
+
+    #plot {
+      height: 520px;
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 6px rgba(124, 240, 197, 0.12);
+    }
+
+    .range-output {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: -4px;
+    }
+
+    @media (max-width: 768px) {
+      body {
+        padding: 18px 12px 32px;
+      }
+      #plot {
+        height: 420px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <h1>Nova Graphing Calculator <span class="badge">beta</span></h1>
+        <p class="lede">Graph any function of <code>x</code>, sample thousands of points, and evaluate exact values in one click. Works offline once loaded.</p>
+      </div>
+      <div class="status"><span class="dot"></span>Live plotting</div>
+    </header>
+
+    <section class="grid">
+      <article class="card" aria-label="Expression">
+        <h2>Expression</h2>
+        <label for="expression">Use <code>x</code> as the variable. Examples: sin(x), x^3 - 2x, e^(0.3x)</label>
+        <input id="expression" type="text" value="sin(x)" spellcheck="false" autocomplete="off" />
+        <div class="pill-row" aria-label="Examples">
+          <span class="pill" data-example="sin(x)">sin(x)</span>
+          <span class="pill" data-example="cos(x) + 0.3x">cos(x) + 0.3x</span>
+          <span class="pill" data-example="x^3 - 4x">x^3 - 4x</span>
+          <span class="pill" data-example="e^(0.5x)">e^(0.5x)</span>
+          <span class="pill" data-example="log(x)">log(x)</span>
+        </div>
+        <div class="actions">
+          <button id="plotBtn">Plot Graph</button>
+          <button id="resetBtn" class="secondary">Reset</button>
+        </div>
+      </article>
+
+      <article class="card" aria-label="Settings">
+        <h2>Range &amp; Sampling</h2>
+        <div class="row">
+          <div>
+            <label for="xmin">x-min</label>
+            <input id="xmin" type="number" value="-10" step="0.5" />
+          </div>
+          <div>
+            <label for="xmax">x-max</label>
+            <input id="xmax" type="number" value="10" step="0.5" />
+          </div>
+          <div>
+            <label for="evalX">Evaluate at</label>
+            <input id="evalX" type="number" value="0" step="0.5" />
+          </div>
+        </div>
+        <label for="samples">Samples</label>
+        <input id="samples" type="range" min="50" max="2000" value="600" />
+        <div class="range-output"><span>50</span><span id="sampleCount">600 pts</span><span>2000</span></div>
+        <div class="actions">
+          <button id="evaluateBtn" class="secondary">Evaluate f(x)</button>
+          <button id="gridToggle" class="secondary">Grid On</button>
+        </div>
+      </article>
+
+      <article class="card" aria-label="Value">
+        <h2>Value</h2>
+        <p class="muted">Instant value of <code>f(x)</code> at the chosen point plus domain errors if any.</p>
+        <div id="valueResult" class="result">f(0) = 0.0000</div>
+        <div id="notice" class="muted"></div>
+      </article>
+    </section>
+
+    <section class="plot-shell" aria-label="Graph">
+      <div id="plot"></div>
+    </section>
+  </main>
+
+  <script>
+    const exprInput = document.getElementById('expression');
+    const xminInput = document.getElementById('xmin');
+    const xmaxInput = document.getElementById('xmax');
+    const samplesInput = document.getElementById('samples');
+    const sampleCount = document.getElementById('sampleCount');
+    const evalInput = document.getElementById('evalX');
+    const valueResult = document.getElementById('valueResult');
+    const notice = document.getElementById('notice');
+    const gridToggle = document.getElementById('gridToggle');
+
+    let compiled = null;
+    let gridOn = false;
+
+    function setNotice(msg, tone = 'muted') {
+      notice.textContent = msg;
+      notice.style.color = tone === 'warn' ? '#f6c177' : 'var(--muted)';
+    }
+
+    function compileExpression() {
+      const expr = exprInput.value.trim();
+      if (!expr) {
+        throw new Error('Enter an expression to plot.');
+      }
+      compiled = math.compile(expr);
+      return compiled;
+    }
+
+    function linspace(min, max, n) {
+      const step = (max - min) / (n - 1);
+      return Array.from({ length: n }, (_, i) => min + i * step);
+    }
+
+    function evaluatePoint(x) {
+      if (!compiled) compileExpression();
+      const result = compiled.evaluate({ x });
+      if (math.isComplex(result)) {
+        throw new Error('Result is complex at x = ' + x.toFixed(3));
+      }
+      return result;
+    }
+
+    function evaluateDisplay() {
+      try {
+        const x0 = Number(evalInput.value);
+        const y0 = evaluatePoint(x0);
+        valueResult.textContent = `f(${x0}) = ${Number(y0).toFixed(6)}`;
+        setNotice('');
+      } catch (err) {
+        valueResult.textContent = '—';
+        setNotice(err.message, 'warn');
+      }
+    }
+
+    function plotGraph() {
+      let expr;
+      try {
+        expr = compileExpression();
+      } catch (err) {
+        setNotice(err.message, 'warn');
+        return;
+      }
+
+      const xmin = Number(xminInput.value);
+      const xmax = Number(xmaxInput.value);
+      const n = Number(samplesInput.value);
+
+      if (!Number.isFinite(xmin) || !Number.isFinite(xmax) || xmin === xmax) {
+        setNotice('x-min and x-max must be different numbers.', 'warn');
+        return;
+      }
+      if (xmax < xmin) {
+        setNotice('x-max must be greater than x-min.', 'warn');
+        return;
+      }
+
+      const xs = linspace(xmin, xmax, n);
+      const ys = [];
+      let badPoints = 0;
+
+      xs.forEach((x) => {
+        try {
+          const y = expr.evaluate({ x });
+          if (math.isComplex(y) || !Number.isFinite(Number(y))) {
+            ys.push(null);
+            badPoints += 1;
+          } else {
+            ys.push(Number(y));
+          }
+        } catch (err) {
+          ys.push(null);
+          badPoints += 1;
+        }
+      });
+
+      const color = '#7cf0c5';
+      const trace = {
+        x: xs,
+        y: ys,
+        mode: 'lines',
+        line: { color, width: 3 },
+        hovertemplate: 'x=%{x:.3f}<br>y=%{y:.6f}<extra></extra>',
+      };
+
+      const points = {
+        x: xs.filter((_, i) => ys[i] !== null),
+        y: ys.filter((y) => y !== null),
+        mode: 'markers',
+        type: 'scatter',
+        marker: { size: 3, color: '#f6c177', opacity: 0.6 },
+        hoverinfo: 'skip',
+        showlegend: false,
+      };
+
+      const layout = {
+        margin: { l: 50, r: 20, t: 10, b: 40 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        font: { color: '#f4f6fb', family: 'Space Grotesk' },
+        xaxis: {
+          gridcolor: gridOn ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0)',
+          zeroline: true,
+          zerolinecolor: 'rgba(255,255,255,0.25)',
+        },
+        yaxis: {
+          gridcolor: gridOn ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0)',
+          zeroline: true,
+          zerolinecolor: 'rgba(255,255,255,0.25)',
+        },
+        hovermode: 'closest',
+      };
+
+      Plotly.newPlot('plot', [trace, points], layout, { displayModeBar: true, responsive: true });
+
+      const warn = badPoints ? `${badPoints} sample(s) returned undefined/complex values.` : '';
+      setNotice(warn);
+      evaluateDisplay();
+    }
+
+    function resetAll() {
+      exprInput.value = 'sin(x)';
+      xminInput.value = -10;
+      xmaxInput.value = 10;
+      evalInput.value = 0;
+      samplesInput.value = 600;
+      sampleCount.textContent = '600 pts';
+      gridOn = false;
+      gridToggle.textContent = 'Grid On';
+      setNotice('');
+      plotGraph();
+    }
+
+    document.getElementById('plotBtn').addEventListener('click', plotGraph);
+    document.getElementById('evaluateBtn').addEventListener('click', evaluateDisplay);
+    document.getElementById('resetBtn').addEventListener('click', resetAll);
+
+    samplesInput.addEventListener('input', (e) => {
+      sampleCount.textContent = `${e.target.value} pts`;
+    });
+
+    gridToggle.addEventListener('click', () => {
+      gridOn = !gridOn;
+      gridToggle.textContent = gridOn ? 'Grid Off' : 'Grid On';
+      plotGraph();
+    });
+
+    document.querySelectorAll('[data-example]').forEach((pill) => {
+      pill.addEventListener('click', () => {
+        exprInput.value = pill.dataset.example;
+        plotGraph();
+      });
+    });
+
+    exprInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        plotGraph();
+      }
+    });
+
+    window.addEventListener('resize', () => Plotly.Plots.resize('plot'));
+
+    // Kick things off
+    plotGraph();
+  </script>
+</body>
+</html>
