@@ -366,6 +366,7 @@
 
     function evaluateDisplay() {
       try {
+        compileExpression(); // always refresh in case the expression changed
         const x0 = Number(evalInput.value);
         const y0 = evaluatePoint(x0);
         valueResult.textContent = `f(${x0}) = ${Number(y0).toFixed(6)}`;
@@ -499,6 +500,11 @@
       if (e.key === 'Enter') {
         plotGraph();
       }
+    });
+
+    exprInput.addEventListener('input', () => {
+      compiled = null; // invalidate cached compilation when the user edits
+      setNotice('');
     });
 
     window.addEventListener('resize', () => Plotly.Plots.resize('plot'));
