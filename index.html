@@ -651,15 +651,15 @@
             return;
           }
 
-          const formatted = roots.map((r) => r.toFixed(6)).join(', ');
-          valueResult.textContent = `Solutions: x ≈ ${formatted}`;
+        const formatted = roots.map((r) => formatNumber(r, 6)).join(', ');
+        valueResult.textContent = `Solutions: x ≈ ${formatted}`;
           setNotice(`Detected ${roots.length} solution(s) between ${xmin} and ${xmax}.`);
           return;
         }
 
         const x0 = Number(evalInput.value);
         const y0 = evaluatePoint(primary, x0);
-        valueResult.textContent = `${primary.label || 'f'}(${x0}) = ${Number(y0).toFixed(6)}`;
+        valueResult.textContent = `${primary.label || 'f'}(${formatNumber(x0, 6)}) = ${formatNumber(Number(y0), 6)}`;
         setNotice('');
       } catch (err) {
         valueResult.textContent = '—';
@@ -793,7 +793,7 @@
         }
         const x0 = Number(evalInput.value);
         const y0 = evaluatePoint(primaryItem, x0);
-        valueResult.textContent = `${primaryItem.label || 'f'}(${x0}) = ${Number(y0).toFixed(6)}`;
+        valueResult.textContent = `${primaryItem.label || 'f'}(${formatNumber(x0, 6)}) = ${formatNumber(Number(y0), 6)}`;
       } catch (err) {
         valueResult.textContent = '—';
       }
