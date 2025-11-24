@@ -269,7 +269,7 @@
     <section class="grid">
       <article class="card" aria-label="Expression">
         <h2>Expression</h2>
-        <label for="expression">Use <code>x</code> as the variable. Examples: sin(x), x^3 - 2x, e^(0.3x)</label>
+        <label for="expression">Use <code>x</code> as the variable. Examples: sin(x), x^3 - 2x, e^(0.3x) or equations like 3x - 7 = 11</label>
         <input id="expression" type="text" value="sin(x)" spellcheck="false" autocomplete="off" />
         <div class="pill-row" aria-label="Examples">
           <span class="pill" data-example="sin(x)">sin(x)</span>
@@ -277,6 +277,7 @@
           <span class="pill" data-example="x^3 - 4x">x^3 - 4x</span>
           <span class="pill" data-example="e^(0.5x)">e^(0.5x)</span>
           <span class="pill" data-example="log(x)">log(x)</span>
+          <span class="pill" data-example="3x - 7 = 11">3x - 7 = 11</span>
         </div>
         <div class="actions">
           <button id="plotBtn">Plot Graph</button>
@@ -304,14 +305,14 @@
         <input id="samples" type="range" min="50" max="2000" value="600" />
         <div class="range-output"><span>50</span><span id="sampleCount">600 pts</span><span>2000</span></div>
         <div class="actions">
-          <button id="evaluateBtn" class="secondary">Evaluate f(x)</button>
+          <button id="evaluateBtn" class="secondary">Evaluate / Solve</button>
           <button id="gridToggle" class="secondary">Grid On</button>
         </div>
       </article>
 
       <article class="card" aria-label="Value">
         <h2>Value</h2>
-        <p class="muted">Instant value of <code>f(x)</code> at the chosen point plus domain errors if any.</p>
+        <p class="muted">Instant value of <code>f(x)</code> at the chosen point or solutions to an equation within the visible range.</p>
         <div id="valueResult" class="result">f(0) = 0.0000</div>
         <div id="notice" class="muted"></div>
       </article>
@@ -335,6 +336,8 @@
 
     let compiled = null;
     let gridOn = false;
+    let isEquation = false;
+    let equationParts = null; // { left, right, leftCompiled, rightCompiled }
 
     function setNotice(msg, tone = 'muted') {
       notice.textContent = msg;
@@ -342,10 +345,42 @@
     }
 
     function compileExpression() {
-      const expr = exprInput.value.trim();
-      if (!expr) {
+      const raw = exprInput.value.trim();
+      if (!raw) {
         throw new Error('Enter an expression to plot.');
       }
+
+      // Normalize and detect equations
+      const expr = raw.replace('==', '=');
+      isEquation = false;
+      equationParts = null;
+
+      if (expr.includes('=')) {
+        const pieces = expr.split('=');
+        if (pieces.length !== 2) {
+          throw new Error('Only one "=" is supported per equation.');
+        }
+
+        const left = pieces[0].trim();
+        const right = pieces[1].trim();
+        if (!left || !right) {
+          throw new Error('Add an expression on both sides of "=".');
+        }
+
+        const diffExpr = `(${left}) - (${right})`;
+        compiled = math.compile(diffExpr);
+
+        equationParts = {
+          left,
+          right,
+          leftCompiled: math.compile(left),
+          rightCompiled: math.compile(right),
+        };
+
+        isEquation = true;
+        return compiled;
+      }
+
       compiled = math.compile(expr);
       return compiled;
     }
@@ -364,9 +399,120 @@
       return result;
     }
 
+    function findRoots(xs, ys) {
+      const roots = [];
+      const eps = 1e-7;
+
+      const validYs = ys.filter((y) => y !== null && Number.isFinite(y));
+      const maxAbs = validYs.length ? Math.max(...validYs.map((y) => Math.abs(y))) : null;
+      const infiniteSolutions = maxAbs !== null && maxAbs < eps;
+
+      if (infiniteSolutions) {
+        return { roots: [], infiniteSolutions: true };
+      }
+
+      const pushUnique = (val) => {
+        if (!Number.isFinite(val)) return;
+        if (!roots.some((r) => Math.abs(r - val) < 1e-6)) {
+          roots.push(val);
+        }
+      };
+
+      for (let i = 0; i < xs.length; i++) {
+        const y = ys[i];
+        if (y === null || !Number.isFinite(y)) continue;
+        if (Math.abs(y) < eps) pushUnique(xs[i]);
+        if (i === 0) continue;
+        const yPrev = ys[i - 1];
+        if (yPrev === null || !Number.isFinite(yPrev)) continue;
+        if (yPrev === 0 && y === 0) continue;
+        if (yPrev * y < 0) {
+          // Linear interpolation for zero crossing
+          const x0 = xs[i - 1];
+          const x1 = xs[i];
+          const root = x0 - yPrev * (x1 - x0) / (y - yPrev);
+          pushUnique(root);
+        }
+      }
+
+      roots.sort((a, b) => a - b);
+      return { roots, infiniteSolutions: false };
+    }
+
+    function sampleEquation(xmin, xmax, n) {
+      if (!equationParts) {
+        throw new Error('No equation detected.');
+      }
+
+      const xs = linspace(xmin, xmax, n);
+      const leftYs = [];
+      const rightYs = [];
+      const diffYs = [];
+      let badPoints = 0;
+
+      xs.forEach((x) => {
+        try {
+          const l = equationParts.leftCompiled.evaluate({ x });
+          const r = equationParts.rightCompiled.evaluate({ x });
+
+          if (
+            math.isComplex(l) ||
+            math.isComplex(r) ||
+            !Number.isFinite(Number(l)) ||
+            !Number.isFinite(Number(r))
+          ) {
+            leftYs.push(null);
+            rightYs.push(null);
+            diffYs.push(null);
+            badPoints += 1;
+            return;
+          }
+
+          const ln = Number(l);
+          const rn = Number(r);
+          leftYs.push(ln);
+          rightYs.push(rn);
+          diffYs.push(ln - rn);
+        } catch (err) {
+          leftYs.push(null);
+          rightYs.push(null);
+          diffYs.push(null);
+          badPoints += 1;
+        }
+      });
+
+      const rootInfo = findRoots(xs, diffYs);
+      return { xs, leftYs, rightYs, diffYs, badPoints, ...rootInfo };
+    }
+
     function evaluateDisplay() {
       try {
         compileExpression(); // always refresh in case the expression changed
+
+        if (isEquation) {
+          const xmin = Number(xminInput.value);
+          const xmax = Number(xmaxInput.value);
+          const n = Math.max(Number(samplesInput.value), 400);
+          const { roots, infiniteSolutions } = sampleEquation(xmin, xmax, n);
+
+          if (infiniteSolutions) {
+            valueResult.textContent = 'Solutions: all real x';
+            setNotice('The two sides are equal for every sampled x.');
+            return;
+          }
+
+          if (!roots.length) {
+            valueResult.textContent = 'Solutions: none in range';
+            setNotice('No solution detected between x-min and x-max. Try a wider range.', 'warn');
+            return;
+          }
+
+          const formatted = roots.map((r) => r.toFixed(6)).join(', ');
+          valueResult.textContent = `Solutions: x ≈ ${formatted}`;
+          setNotice(`Detected ${roots.length} solution(s) between ${xmin} and ${xmax}.`);
+          return;
+        }
+
         const x0 = Number(evalInput.value);
         const y0 = evaluatePoint(x0);
         valueResult.textContent = `f(${x0}) = ${Number(y0).toFixed(6)}`;
@@ -396,6 +542,80 @@
       }
       if (xmax < xmin) {
         setNotice('x-max must be greater than x-min.', 'warn');
+        return;
+      }
+
+      if (isEquation) {
+        const { xs, leftYs, rightYs, diffYs, badPoints, roots, infiniteSolutions } = sampleEquation(
+          xmin,
+          xmax,
+          n
+        );
+
+        const traces = [
+          {
+            x: xs,
+            y: leftYs,
+            mode: 'lines',
+            name: equationParts.left,
+            line: { color: '#7cf0c5', width: 3 },
+            hovertemplate: 'x=%{x:.3f}<br>left=%{y:.6f}<extra></extra>',
+          },
+          {
+            x: xs,
+            y: rightYs,
+            mode: 'lines',
+            name: equationParts.right,
+            line: { color: '#f6c177', width: 3, dash: 'dot' },
+            hovertemplate: 'x=%{x:.3f}<br>right=%{y:.6f}<extra></extra>',
+          },
+        ];
+
+        if (!infiniteSolutions && roots.length) {
+          traces.push({
+            x: roots,
+            y: roots.map((r) => equationParts.leftCompiled.evaluate({ x: r })),
+            mode: 'markers',
+            name: 'Solutions',
+            marker: { color: '#9cf0f4', size: 10, symbol: 'star' },
+            hovertemplate: 'x=%{x:.6f}<extra>solution</extra>',
+          });
+        }
+
+        const layout = {
+          margin: { l: 50, r: 20, t: 10, b: 40 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)',
+          font: { color: '#f4f6fb', family: 'Space Grotesk' },
+          xaxis: {
+            gridcolor: gridOn ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0)',
+            zeroline: true,
+            zerolinecolor: 'rgba(255,255,255,0.25)',
+          },
+          yaxis: {
+            gridcolor: gridOn ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0)',
+            zeroline: true,
+            zerolinecolor: 'rgba(255,255,255,0.25)',
+          },
+          hovermode: 'closest',
+          showlegend: true,
+          shapes: [
+            {
+              type: 'line',
+              x0: xmin,
+              x1: xmax,
+              y0: 0,
+              y1: 0,
+              line: { color: 'rgba(255,255,255,0.2)', dash: 'dot', width: 1 },
+            },
+          ],
+        };
+
+        Plotly.newPlot('plot', traces, layout, { displayModeBar: true, responsive: true });
+
+        const warn = badPoints ? `${badPoints} sample(s) returned undefined/complex values.` : '';
+        setNotice(warn);
+        evaluateDisplay();
         return;
       }
 
