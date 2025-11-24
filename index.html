@@ -246,6 +246,21 @@
       margin-top: -4px;
     }
 
+    .analysis-list {
+      margin: 4px 0 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .analysis-list strong {
+      color: var(--text);
+    }
+
     @media (max-width: 768px) {
       body {
         padding: 18px 12px 32px;
@@ -316,6 +331,14 @@
         <div id="valueResult" class="result">f(0) = 0.0000</div>
         <div id="notice" class="muted"></div>
       </article>
+
+      <article class="card" aria-label="Analysis">
+        <h2>Analysis</h2>
+        <p class="muted">Automatic symbolic helpers: derivative, tangent, roots, intersections, definite area, linear systems, and matrices.</p>
+        <ul id="analysisList" class="analysis-list">
+          <li>Plot to see analysis.</li>
+        </ul>
+      </article>
     </section>
 
     <section class="plot-shell" aria-label="Graph">
@@ -333,56 +356,122 @@
     const valueResult = document.getElementById('valueResult');
     const notice = document.getElementById('notice');
     const gridToggle = document.getElementById('gridToggle');
+    const analysisList = document.getElementById('analysisList');
 
-    let compiled = null;
+    let compiledItems = []; // array of parsed/compiled expressions
     let gridOn = false;
-    let isEquation = false;
-    let equationParts = null; // { left, right, leftCompiled, rightCompiled }
+    let lastGraph = null; // cache of last plotted data for analysis/value reuse
 
     function setNotice(msg, tone = 'muted') {
       notice.textContent = msg;
       notice.style.color = tone === 'warn' ? '#f6c177' : 'var(--muted)';
     }
 
-    function compileExpression() {
-      const raw = exprInput.value.trim();
-      if (!raw) {
+    function splitExpressions(raw) {
+      return raw
+        .split(/[\n;]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+
+    function parseIntegrateParts(text) {
+      // supports "f(x)", "f(x), a, b"
+      const parts = text.split(',').map((p) => p.trim());
+      const integrand = parts[0];
+      const lower = parts[1] !== undefined ? Number(parts[1]) : Number(xminInput.value);
+      const upper = parts[2] !== undefined ? Number(parts[2]) : Number(xmaxInput.value);
+      return { integrand, lower, upper };
+    }
+
+    function compileEntry(exprText) {
+      const cleaned = exprText.replace('==', '=').trim();
+      if (!cleaned) {
         throw new Error('Enter an expression to plot.');
       }
 
-      // Normalize and detect equations
-      const expr = raw.replace('==', '=');
-      isEquation = false;
-      equationParts = null;
+      // derivative shorthand d/dx(...)
+      const diffMatch = cleaned.match(/^d\s*\/\s*dx\s*(?:\((.+)\)|(.+))$/i);
+      if (diffMatch) {
+        const inner = (diffMatch[1] || diffMatch[2]).trim();
+        const derivativeNode = math.derivative(inner, 'x');
+        return {
+          type: 'function',
+          kind: 'derivative',
+          label: `d/dx(${inner})`,
+          raw: cleaned,
+          base: inner,
+          compiled: derivativeNode.compile(),
+          derivativeNode,
+        };
+      }
 
-      if (expr.includes('=')) {
-        const pieces = expr.split('=');
+      // integral shorthand: ∫ f(x) dx OR int(f(x), a, b)
+      let intInfo = null;
+      const integralSymbol = cleaned.match(/^∫\s*(.+)\s*dx$/i);
+      const intCall = cleaned.match(/^int(?:egrate)?\s*\((.+)\)\s*$/i);
+      if (integralSymbol) {
+        intInfo = { integrand: integralSymbol[1].trim(), lower: Number(xminInput.value), upper: Number(xmaxInput.value) };
+      } else if (intCall) {
+        intInfo = parseIntegrateParts(intCall[1]);
+      }
+      if (intInfo) {
+        const compiled = math.compile(intInfo.integrand);
+        return {
+          type: 'function',
+          kind: 'integral',
+          label: `∫ ${intInfo.integrand} dx`,
+          raw: cleaned,
+          base: intInfo.integrand,
+          compiled,
+          lower: intInfo.lower,
+          upper: intInfo.upper,
+        };
+      }
+
+      // equation detection
+      if (cleaned.includes('=')) {
+        const pieces = cleaned.split('=');
         if (pieces.length !== 2) {
           throw new Error('Only one "=" is supported per equation.');
         }
-
         const left = pieces[0].trim();
         const right = pieces[1].trim();
         if (!left || !right) {
           throw new Error('Add an expression on both sides of "=".');
         }
-
         const diffExpr = `(${left}) - (${right})`;
-        compiled = math.compile(diffExpr);
-
-        equationParts = {
+        return {
+          type: 'equation',
+          kind: 'equation',
+          label: `${left} = ${right}`,
+          raw: cleaned,
           left,
           right,
+          compiled: math.compile(diffExpr),
           leftCompiled: math.compile(left),
           rightCompiled: math.compile(right),
         };
-
-        isEquation = true;
-        return compiled;
       }
 
-      compiled = math.compile(expr);
-      return compiled;
+      // plain function
+      return {
+        type: 'function',
+        kind: 'plain',
+        label: cleaned,
+        raw: cleaned,
+        base: cleaned,
+        compiled: math.compile(cleaned),
+      };
+    }
+
+    function compileAll() {
+      const raw = exprInput.value.trim();
+      if (!raw) {
+        throw new Error('Enter an expression to plot.');
+      }
+      const parts = splitExpressions(raw);
+      compiledItems = parts.map((p) => compileEntry(p));
+      return compiledItems;
     }
 
     function linspace(min, max, n) {
@@ -390,9 +479,8 @@
       return Array.from({ length: n }, (_, i) => min + i * step);
     }
 
-    function evaluatePoint(x) {
-      if (!compiled) compileExpression();
-      const result = compiled.evaluate({ x });
+    function evaluatePoint(item, x) {
+      const result = item.compiled.evaluate({ x });
       if (math.isComplex(result)) {
         throw new Error('Result is complex at x = ' + x.toFixed(3));
       }
@@ -439,8 +527,8 @@
       return { roots, infiniteSolutions: false };
     }
 
-    function sampleEquation(xmin, xmax, n) {
-      if (!equationParts) {
+    function sampleEquation(item, xmin, xmax, n) {
+      if (!item || item.type !== 'equation') {
         throw new Error('No equation detected.');
       }
 
@@ -452,8 +540,8 @@
 
       xs.forEach((x) => {
         try {
-          const l = equationParts.leftCompiled.evaluate({ x });
-          const r = equationParts.rightCompiled.evaluate({ x });
+          const l = item.leftCompiled.evaluate({ x });
+          const r = item.rightCompiled.evaluate({ x });
 
           if (
             math.isComplex(l) ||
@@ -487,13 +575,17 @@
 
     function evaluateDisplay() {
       try {
-        compileExpression(); // always refresh in case the expression changed
+        if (!compiledItems.length) compileAll();
+        const primary = compiledItems[0];
+        if (!primary) {
+          throw new Error('Enter an expression to plot.');
+        }
 
-        if (isEquation) {
+        if (primary.type === 'equation') {
           const xmin = Number(xminInput.value);
           const xmax = Number(xmaxInput.value);
           const n = Math.max(Number(samplesInput.value), 400);
-          const { roots, infiniteSolutions } = sampleEquation(xmin, xmax, n);
+          const { roots, infiniteSolutions } = sampleEquation(primary, xmin, xmax, n);
 
           if (infiniteSolutions) {
             valueResult.textContent = 'Solutions: all real x';
@@ -514,8 +606,8 @@
         }
 
         const x0 = Number(evalInput.value);
-        const y0 = evaluatePoint(x0);
-        valueResult.textContent = `f(${x0}) = ${Number(y0).toFixed(6)}`;
+        const y0 = evaluatePoint(primary, x0);
+        valueResult.textContent = `${primary.label || 'f'}(${x0}) = ${Number(y0).toFixed(6)}`;
         setNotice('');
       } catch (err) {
         valueResult.textContent = '—';
@@ -523,10 +615,142 @@
       }
     }
 
-    function plotGraph() {
-      let expr;
+    function trapz(xs, ys) {
+      let area = 0;
+      for (let i = 1; i < xs.length; i++) {
+        const y0 = ys[i - 1];
+        const y1 = ys[i];
+        if (y0 === null || y1 === null || !Number.isFinite(y0) || !Number.isFinite(y1)) continue;
+        area += 0.5 * (y0 + y1) * (xs[i] - xs[i - 1]);
+      }
+      return area;
+    }
+
+    function formatNumber(val, digits = 6) {
+      if (!Number.isFinite(val)) return '—';
+      if (Math.abs(val) >= 1e4 || Math.abs(val) < 1e-4) {
+        return val.toExponential(4);
+      }
+      return val.toFixed(digits);
+    }
+
+    function renderAnalysis(info) {
+      if (!info) {
+        analysisList.innerHTML = '<li>Plot to see analysis.</li>';
+        return;
+      }
+      const rows = [];
+      if (info.derivativeExpr) {
+        rows.push(`<strong>Derivative:</strong> ${info.derivativeExpr}`);
+      }
+      if (info.slope !== undefined && Number.isFinite(info.slope)) {
+        rows.push(`<strong>Slope @ x=${formatNumber(info.evalX, 4)}:</strong> ${formatNumber(info.slope, 6)}`);
+      }
+      if (info.tangent) rows.push(`<strong>Tangent:</strong> ${info.tangent}`);
+      if (info.roots) {
+        rows.push(
+          info.roots.length
+            ? `<strong>Roots:</strong> x ≈ ${info.roots.map((r) => formatNumber(r, 6)).join(', ')}`
+            : '<strong>Roots:</strong> none in range'
+        );
+      }
+      if (info.intersections && info.intersections.length) {
+        rows.push(
+          `<strong>Intersections:</strong> ${info.intersections
+            .map((p) => `(${formatNumber(p.x, 4)}, ${formatNumber(p.y, 4)})`)
+            .join('; ')}`
+        );
+      }
+      if (info.area !== null && info.area !== undefined) {
+        rows.push(`<strong>Area [${xminInput.value}, ${xmaxInput.value}]:</strong> ${formatNumber(info.area, 6)}`);
+      }
+      if (info.systemSummary) rows.push(`<strong>System:</strong> ${info.systemSummary}`);
+      if (info.matrixSummary) rows.push(`<strong>Matrix result:</strong> ${info.matrixSummary}`);
+      if (info.equationSolutions) rows.push(info.equationSolutions);
+      if (!rows.length) rows.push('No analysis available for this input.');
+      analysisList.innerHTML = rows.map((r) => `<li>${r}</li>`).join('');
+    }
+
+    function collectVariables(str) {
+      const names = new Set();
+      const rx = /[A-Za-z]\w*/g;
+      const ignore = new Set([
+        'sin',
+        'cos',
+        'tan',
+        'log',
+        'ln',
+        'exp',
+        'sqrt',
+        'abs',
+        'pow',
+        'min',
+        'max',
+        'pi',
+        'e',
+      ]);
+      let m;
+      while ((m = rx.exec(str)) !== null) {
+        const name = m[0];
+        if (ignore.has(name.toLowerCase())) continue;
+        names.add(name);
+      }
+      return names;
+    }
+
+    function solveLinearSystem(equations) {
+      const varSet = new Set();
+      equations.forEach((eq) => {
+        collectVariables(eq.left).forEach((v) => varSet.add(v));
+        collectVariables(eq.right).forEach((v) => varSet.add(v));
+      });
+      const variables = Array.from(varSet);
+      if (!variables.length || variables.length > equations.length) return null;
+
+      const A = [];
+      const b = [];
+      equations.forEach((eq) => {
+        const zeroScope = Object.fromEntries(variables.map((v) => [v, 0]));
+        const c0 = eq.compiled.evaluate(zeroScope);
+        const row = variables.map((v) => {
+          const scope = { ...zeroScope, [v]: 1 };
+          return eq.compiled.evaluate(scope) - c0;
+        });
+        A.push(row);
+        b.push(-c0);
+      });
+
       try {
-        expr = compileExpression();
+        const solution = math.lusolve(A, b).map((r) => r[0]);
+        const summary = variables.map((v, i) => `${v} = ${formatNumber(solution[i], 6)}`).join(', ');
+        return { variables, solution, summary };
+      } catch (err) {
+        return null;
+      }
+    }
+
+    function updateValueResult(primaryItem) {
+      try {
+        if (!primaryItem) {
+          valueResult.textContent = '—';
+          return;
+        }
+        if (primaryItem.type === 'equation') {
+          valueResult.textContent = 'Solutions shown in Analysis.';
+          return;
+        }
+        const x0 = Number(evalInput.value);
+        const y0 = evaluatePoint(primaryItem, x0);
+        valueResult.textContent = `${primaryItem.label || 'f'}(${x0}) = ${Number(y0).toFixed(6)}`;
+      } catch (err) {
+        valueResult.textContent = '—';
+      }
+    }
+
+    function plotGraph() {
+      let items;
+      try {
+        items = compileAll();
       } catch (err) {
         setNotice(err.message, 'warn');
         return;
@@ -545,117 +769,204 @@
         return;
       }
 
-      if (isEquation) {
-        const { xs, leftYs, rightYs, diffYs, badPoints, roots, infiniteSolutions } = sampleEquation(
-          xmin,
-          xmax,
-          n
-        );
-
-        const traces = [
-          {
-            x: xs,
-            y: leftYs,
-            mode: 'lines',
-            name: equationParts.left,
-            line: { color: '#7cf0c5', width: 3 },
-            hovertemplate: 'x=%{x:.3f}<br>left=%{y:.6f}<extra></extra>',
-          },
-          {
-            x: xs,
-            y: rightYs,
-            mode: 'lines',
-            name: equationParts.right,
-            line: { color: '#f6c177', width: 3, dash: 'dot' },
-            hovertemplate: 'x=%{x:.3f}<br>right=%{y:.6f}<extra></extra>',
-          },
-        ];
-
-        if (!infiniteSolutions && roots.length) {
-          traces.push({
-            x: roots,
-            y: roots.map((r) => equationParts.leftCompiled.evaluate({ x: r })),
-            mode: 'markers',
-            name: 'Solutions',
-            marker: { color: '#9cf0f4', size: 10, symbol: 'star' },
-            hovertemplate: 'x=%{x:.6f}<extra>solution</extra>',
-          });
-        }
-
-        const layout = {
-          margin: { l: 50, r: 20, t: 10, b: 40 },
-          paper_bgcolor: 'rgba(0,0,0,0)',
-          plot_bgcolor: 'rgba(0,0,0,0)',
-          font: { color: '#f4f6fb', family: 'Space Grotesk' },
-          xaxis: {
-            gridcolor: gridOn ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0)',
-            zeroline: true,
-            zerolinecolor: 'rgba(255,255,255,0.25)',
-          },
-          yaxis: {
-            gridcolor: gridOn ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0)',
-            zeroline: true,
-            zerolinecolor: 'rgba(255,255,255,0.25)',
-          },
-          hovermode: 'closest',
-          showlegend: true,
-          shapes: [
-            {
-              type: 'line',
-              x0: xmin,
-              x1: xmax,
-              y0: 0,
-              y1: 0,
-              line: { color: 'rgba(255,255,255,0.2)', dash: 'dot', width: 1 },
-            },
-          ],
-        };
-
-        Plotly.newPlot('plot', traces, layout, { displayModeBar: true, responsive: true });
-
-        const warn = badPoints ? `${badPoints} sample(s) returned undefined/complex values.` : '';
-        setNotice(warn);
-        evaluateDisplay();
-        return;
-      }
-
       const xs = linspace(xmin, xmax, n);
-      const ys = [];
-      let badPoints = 0;
+      const traces = [];
+      const badNotes = [];
+      const functionData = [];
+      const equationData = [];
+      const colors = ['#7cf0c5', '#f6c177', '#9cf0f4', '#d783ff', '#ff8fab'];
 
-      xs.forEach((x) => {
-        try {
-          const y = expr.evaluate({ x });
-          if (math.isComplex(y) || !Number.isFinite(Number(y))) {
-            ys.push(null);
-            badPoints += 1;
-          } else {
-            ys.push(Number(y));
+      items.forEach((item, idx) => {
+        if (item.type === 'equation') {
+          const sample = sampleEquation(item, xmin, xmax, n);
+          equationData.push({ item, ...sample });
+
+          traces.push({
+            x: sample.xs,
+            y: sample.leftYs,
+            mode: 'lines',
+            name: item.left,
+            line: { color: colors[idx % colors.length], width: 3 },
+            hovertemplate: 'x=%{x:.3f}<br>left=%{y:.6f}<extra></extra>',
+          });
+          traces.push({
+            x: sample.xs,
+            y: sample.rightYs,
+            mode: 'lines',
+            name: item.right,
+            line: { color: colors[(idx + 1) % colors.length], width: 3, dash: 'dot' },
+            hovertemplate: 'x=%{x:.3f}<br>right=%{y:.6f}<extra></extra>',
+          });
+          if (!sample.infiniteSolutions && sample.roots.length) {
+            traces.push({
+              x: sample.roots,
+              y: sample.roots.map((r) => item.leftCompiled.evaluate({ x: r })),
+              mode: 'markers',
+              name: 'Solutions',
+              marker: { color: '#9cf0f4', size: 10, symbol: 'star' },
+              hovertemplate: 'x=%{x:.6f}<extra>solution</extra>',
+            });
           }
-        } catch (err) {
-          ys.push(null);
-          badPoints += 1;
+
+          if (sample.badPoints) {
+            badNotes.push(`Equation ${idx + 1}: ${sample.badPoints} undefined/complex samples.`);
+          }
+        } else {
+          const ys = [];
+          let badPoints = 0;
+          let matrixSummary = null;
+
+          xs.forEach((x) => {
+            try {
+              const y = item.compiled.evaluate({ x });
+              if (Array.isArray(y) || math.typeOf(y) === 'Matrix') {
+                matrixSummary = JSON.stringify(y._data || y);
+                ys.push(null);
+                badPoints += 1;
+                return;
+              }
+              if (math.isComplex(y) || !Number.isFinite(Number(y))) {
+                ys.push(null);
+                badPoints += 1;
+              } else {
+                ys.push(Number(y));
+              }
+            } catch (err) {
+              ys.push(null);
+              badPoints += 1;
+            }
+          });
+
+          functionData.push({ item, xs, ys, badPoints, matrixSummary });
+          if (matrixSummary) {
+            badNotes.push('Matrix result shown in Analysis; not plottable as a line.');
+          }
+
+          traces.push({
+            x: xs,
+            y: ys,
+            mode: 'lines',
+            name: item.label,
+            line: { color: colors[idx % colors.length], width: 3 },
+            hovertemplate: 'x=%{x:.3f}<br>y=%{y:.6f}<extra></extra>',
+          });
+          traces.push({
+            x: xs.filter((_, i) => ys[i] !== null),
+            y: ys.filter((y) => y !== null),
+            mode: 'markers',
+            type: 'scatter',
+            marker: { size: 3, color: '#f6c177', opacity: 0.6 },
+            hoverinfo: 'skip',
+            showlegend: false,
+          });
+
+          if (badPoints) {
+            badNotes.push(`${item.label}: ${badPoints} undefined/complex samples.`);
+          }
         }
       });
 
-      const color = '#7cf0c5';
-      const trace = {
-        x: xs,
-        y: ys,
-        mode: 'lines',
-        line: { color, width: 3 },
-        hovertemplate: 'x=%{x:.3f}<br>y=%{y:.6f}<extra></extra>',
-      };
+      // Roots for first plottable function
+      let primaryFunc = functionData.find((f) => f.ys.some((y) => y !== null));
+      let primaryRoots = [];
+      if (primaryFunc) {
+        const rootInfo = findRoots(primaryFunc.xs, primaryFunc.ys);
+        primaryRoots = rootInfo.roots;
+        if (primaryRoots.length) {
+          traces.push({
+            x: primaryRoots,
+            y: primaryRoots.map((r) => primaryFunc.item.compiled.evaluate({ x: r })),
+            mode: 'markers',
+            name: 'Roots',
+            marker: { color: '#9cf0f4', size: 10, symbol: 'star' },
+            hovertemplate: 'x=%{x:.6f}<extra>root</extra>',
+          });
+        }
+      }
 
-      const points = {
-        x: xs.filter((_, i) => ys[i] !== null),
-        y: ys.filter((y) => y !== null),
-        mode: 'markers',
-        type: 'scatter',
-        marker: { size: 3, color: '#f6c177', opacity: 0.6 },
-        hoverinfo: 'skip',
-        showlegend: false,
-      };
+      // Intersections between functions
+      const intersections = [];
+      if (functionData.length >= 2) {
+        for (let i = 0; i < functionData.length; i++) {
+          for (let j = i + 1; j < functionData.length; j++) {
+            const a = functionData[i];
+            const b = functionData[j];
+            const diff = a.ys.map((y, k) => {
+              const yb = b.ys[k];
+              if (y === null || yb === null) return null;
+              return y - yb;
+            });
+            const { roots } = findRoots(xs, diff);
+            roots.forEach((r) => {
+              const yVal = a.item.compiled.evaluate({ x: r });
+              intersections.push({ x: r, y: yVal, a: a.item.label, b: b.item.label });
+            });
+          }
+        }
+        if (intersections.length) {
+          traces.push({
+            x: intersections.map((p) => p.x),
+            y: intersections.map((p) => p.y),
+            mode: 'markers',
+            name: 'Intersections',
+            marker: { color: '#d783ff', size: 9, symbol: 'diamond' },
+            hovertemplate: 'x=%{x:.6f}<br>y=%{y:.6f}<extra>intersection</extra>',
+          });
+        }
+      }
+
+      // Tangent line at evalX for primary function
+      let derivativeExpr = null;
+      let slope = null;
+      if (primaryFunc) {
+        const x0 = Number(evalInput.value);
+        try {
+          const dNode = math.derivative(primaryFunc.item.base || primaryFunc.item.raw, 'x');
+          derivativeExpr = dNode.toString();
+          slope = dNode.evaluate({ x: x0 });
+          const y0 = primaryFunc.item.compiled.evaluate({ x: x0 });
+          const tangentYs = xs.map((x) => slope * (x - x0) + y0);
+          traces.push({
+            x: xs,
+            y: tangentYs,
+            mode: 'lines',
+            name: 'Tangent',
+            line: { color: '#f6c177', width: 2, dash: 'dash' },
+            hoverinfo: 'skip',
+          });
+        } catch (err) {
+          // ignore derivative failures (e.g., non-differentiable input)
+        }
+      }
+
+      // Area under primary function
+      let areaVal = null;
+      if (primaryFunc) {
+        areaVal = trapz(primaryFunc.xs, primaryFunc.ys);
+        traces.push({
+          x: primaryFunc.xs,
+          y: primaryFunc.ys,
+          mode: 'lines',
+          line: { color: 'rgba(124, 240, 197, 0.001)' },
+          fill: 'tozeroy',
+          fillcolor: 'rgba(124, 240, 197, 0.12)',
+          name: 'Area',
+          hoverinfo: 'skip',
+          showlegend: false,
+        });
+      }
+
+      // System of equations solver (linear)
+      let systemSummary = null;
+      if (equationData.length >= 2) {
+        const system = solveLinearSystem(equationData.map((e) => e.item));
+        if (system) {
+          systemSummary = system.summary;
+        }
+      }
+
+      // Matrix summary if any
+      const matrixSummary = functionData.find((f) => f.matrixSummary)?.matrixSummary || null;
 
       const layout = {
         margin: { l: 50, r: 20, t: 10, b: 40 },
@@ -673,13 +984,54 @@
           zerolinecolor: 'rgba(255,255,255,0.25)',
         },
         hovermode: 'closest',
+        showlegend: true,
+        shapes: [
+          {
+            type: 'line',
+            x0: xmin,
+            x1: xmax,
+            y0: 0,
+            y1: 0,
+            line: { color: 'rgba(255,255,255,0.2)', dash: 'dot', width: 1 },
+          },
+        ],
       };
 
-      Plotly.newPlot('plot', [trace, points], layout, { displayModeBar: true, responsive: true });
+      Plotly.newPlot('plot', traces, layout, { displayModeBar: true, responsive: true });
 
-      const warn = badPoints ? `${badPoints} sample(s) returned undefined/complex values.` : '';
+      const warn = badNotes.length ? badNotes.join(' ') : '';
       setNotice(warn);
-      evaluateDisplay();
+
+      lastGraph = {
+        xs,
+        functionData,
+        equationData,
+        intersections,
+        areaVal,
+        derivativeExpr,
+        slope,
+      };
+
+      renderAnalysis({
+        derivativeExpr,
+        slope,
+        evalX: Number(evalInput.value),
+        roots: primaryRoots,
+        intersections,
+        area: areaVal,
+        systemSummary,
+        matrixSummary,
+        equationSolutions:
+          equationData.length && equationData[0].roots
+            ? `Equation solutions: ${
+                equationData[0].roots.length
+                  ? equationData[0].roots.map((r) => formatNumber(r, 6)).join(', ')
+                  : 'none in range'
+              }`
+            : null,
+      });
+
+      updateValueResult(primaryFunc?.item || equationData[0]?.item || null);
     }
 
     function resetAll() {
@@ -691,6 +1043,9 @@
       sampleCount.textContent = '600 pts';
       gridOn = false;
       gridToggle.textContent = 'Grid On';
+      compiledItems = [];
+      lastGraph = null;
+      analysisList.innerHTML = '<li>Plot to see analysis.</li>';
       setNotice('');
       plotGraph();
     }
@@ -723,7 +1078,9 @@
     });
 
     exprInput.addEventListener('input', () => {
-      compiled = null; // invalidate cached compilation when the user edits
+      compiledItems = [];
+      lastGraph = null;
+      analysisList.innerHTML = '<li>Plot to see analysis.</li>';
       setNotice('');
     });
 
