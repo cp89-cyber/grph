@@ -362,6 +362,53 @@
     let gridOn = false;
     let lastGraph = null; // cache of last plotted data for analysis/value reuse
 
+    // Known function names so we don't treat them as implicit multiplication
+    const builtinFunctions = new Set([
+      'sin',
+      'cos',
+      'tan',
+      'asin',
+      'acos',
+      'atan',
+      'arcsin',
+      'arccos',
+      'arctan',
+      'log',
+      'ln',
+      'exp',
+      'sqrt',
+      'abs',
+      'cbrt',
+      'sec',
+      'csc',
+      'cot',
+      'pow',
+      'min',
+      'max',
+    ]);
+
+    function normalizeInverseTrig(text) {
+      return text
+        .replace(/sin(?:\s*\^\s*-?1|⁻¹)\s*\(/gi, 'asin(')
+        .replace(/cos(?:\s*\^\s*-?1|⁻¹)\s*\(/gi, 'acos(')
+        .replace(/tan(?:\s*\^\s*-?1|⁻¹)\s*\(/gi, 'atan(')
+        .replace(/\barcsin\b/gi, 'asin')
+        .replace(/\barccos\b/gi, 'acos')
+        .replace(/\barctan\b/gi, 'atan');
+    }
+
+    function insertVariableParenMultiplication(text) {
+      return text.replace(/([A-Za-z]\w*)\s*\(/g, (match, name) => {
+        if (builtinFunctions.has(name.toLowerCase())) return match;
+        return `${name}*(`;
+      });
+    }
+
+    function preprocessExpression(text) {
+      const inverseFixed = normalizeInverseTrig(text);
+      return insertVariableParenMultiplication(inverseFixed);
+    }
+
     function setNotice(msg, tone = 'muted') {
       notice.textContent = msg;
       notice.style.color = tone === 'warn' ? '#f6c177' : 'var(--muted)';
@@ -393,13 +440,14 @@
       const diffMatch = cleaned.match(/^d\s*\/\s*dx\s*(?:\((.+)\)|(.+))$/i);
       if (diffMatch) {
         const inner = (diffMatch[1] || diffMatch[2]).trim();
-        const derivativeNode = math.derivative(inner, 'x');
+        const preparedInner = preprocessExpression(inner);
+        const derivativeNode = math.derivative(preparedInner, 'x');
         return {
           type: 'function',
           kind: 'derivative',
           label: `d/dx(${inner})`,
           raw: cleaned,
-          base: inner,
+          base: preparedInner,
           compiled: derivativeNode.compile(),
           derivativeNode,
         };
@@ -415,13 +463,14 @@
         intInfo = parseIntegrateParts(intCall[1]);
       }
       if (intInfo) {
-        const compiled = math.compile(intInfo.integrand);
+        const preparedIntegrand = preprocessExpression(intInfo.integrand);
+        const compiled = math.compile(preparedIntegrand);
         return {
           type: 'function',
           kind: 'integral',
           label: `∫ ${intInfo.integrand} dx`,
           raw: cleaned,
-          base: intInfo.integrand,
+          base: preparedIntegrand,
           compiled,
           lower: intInfo.lower,
           upper: intInfo.upper,
@@ -434,19 +483,21 @@
         if (pieces.length !== 2) {
           throw new Error('Only one "=" is supported per equation.');
         }
-        const left = pieces[0].trim();
-        const right = pieces[1].trim();
-        if (!left || !right) {
+        const leftRaw = pieces[0].trim();
+        const rightRaw = pieces[1].trim();
+        if (!leftRaw || !rightRaw) {
           throw new Error('Add an expression on both sides of "=".');
         }
+        const left = preprocessExpression(leftRaw);
+        const right = preprocessExpression(rightRaw);
         const diffExpr = `(${left}) - (${right})`;
         return {
           type: 'equation',
           kind: 'equation',
-          label: `${left} = ${right}`,
+          label: `${leftRaw} = ${rightRaw}`,
           raw: cleaned,
-          left,
-          right,
+          left: leftRaw,
+          right: rightRaw,
           compiled: math.compile(diffExpr),
           leftCompiled: math.compile(left),
           rightCompiled: math.compile(right),
@@ -454,13 +505,14 @@
       }
 
       // plain function
+      const prepared = preprocessExpression(cleaned);
       return {
         type: 'function',
         kind: 'plain',
         label: cleaned,
         raw: cleaned,
-        base: cleaned,
-        compiled: math.compile(cleaned),
+        base: prepared,
+        compiled: math.compile(prepared),
       };
     }
 
