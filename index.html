@@ -246,21 +246,6 @@
       margin-top: -4px;
     }
 
-    .analysis-list {
-      margin: 4px 0 0;
-      padding: 0;
-      list-style: none;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      font-size: 14px;
-      color: var(--muted);
-    }
-
-    .analysis-list strong {
-      color: var(--text);
-    }
-
     @media (max-width: 768px) {
       body {
         padding: 18px 12px 32px;
@@ -328,16 +313,9 @@
       <article class="card" aria-label="Value">
         <h2>Value</h2>
         <p class="muted">Instant value of <code>f(x)</code> at the chosen point or solutions to an equation within the visible range.</p>
+        <p class="muted" style="margin-top:-6px">No step-by-step or explanation mode—this tool only shows the plotted graph and a single numeric result.</p>
         <div id="valueResult" class="result">f(0) = 0.0000</div>
         <div id="notice" class="muted"></div>
-      </article>
-
-      <article class="card" aria-label="Analysis">
-        <h2>Analysis</h2>
-        <p class="muted">Automatic symbolic helpers: derivative, tangent, roots, intersections, definite area, linear systems, and matrices.</p>
-        <ul id="analysisList" class="analysis-list">
-          <li>Plot to see analysis.</li>
-        </ul>
       </article>
     </section>
 
@@ -356,11 +334,8 @@
     const valueResult = document.getElementById('valueResult');
     const notice = document.getElementById('notice');
     const gridToggle = document.getElementById('gridToggle');
-    const analysisList = document.getElementById('analysisList');
-
     let compiledItems = []; // array of parsed/compiled expressions
     let gridOn = false;
-    let lastGraph = null; // cache of last plotted data for analysis/value reuse
 
     // Known function names so we don't treat them as implicit multiplication
     const builtinFunctions = new Set([
@@ -667,118 +642,12 @@
       }
     }
 
-    function trapz(xs, ys) {
-      let area = 0;
-      for (let i = 1; i < xs.length; i++) {
-        const y0 = ys[i - 1];
-        const y1 = ys[i];
-        if (y0 === null || y1 === null || !Number.isFinite(y0) || !Number.isFinite(y1)) continue;
-        area += 0.5 * (y0 + y1) * (xs[i] - xs[i - 1]);
-      }
-      return area;
-    }
-
     function formatNumber(val, digits = 6) {
       if (!Number.isFinite(val)) return '—';
       if (Math.abs(val) >= 1e4 || Math.abs(val) < 1e-4) {
         return val.toExponential(4);
       }
       return val.toFixed(digits);
-    }
-
-    function renderAnalysis(info) {
-      if (!info) {
-        analysisList.innerHTML = '<li>Plot to see analysis.</li>';
-        return;
-      }
-      const rows = [];
-      if (info.derivativeExpr) {
-        rows.push(`<strong>Derivative:</strong> ${info.derivativeExpr}`);
-      }
-      if (info.slope !== undefined && Number.isFinite(info.slope)) {
-        rows.push(`<strong>Slope @ x=${formatNumber(info.evalX, 4)}:</strong> ${formatNumber(info.slope, 6)}`);
-      }
-      if (info.tangent) rows.push(`<strong>Tangent:</strong> ${info.tangent}`);
-      if (info.roots) {
-        rows.push(
-          info.roots.length
-            ? `<strong>Roots:</strong> x ≈ ${info.roots.map((r) => formatNumber(r, 6)).join(', ')}`
-            : '<strong>Roots:</strong> none in range'
-        );
-      }
-      if (info.intersections && info.intersections.length) {
-        rows.push(
-          `<strong>Intersections:</strong> ${info.intersections
-            .map((p) => `(${formatNumber(p.x, 4)}, ${formatNumber(p.y, 4)})`)
-            .join('; ')}`
-        );
-      }
-      if (info.area !== null && info.area !== undefined) {
-        rows.push(`<strong>Area [${xminInput.value}, ${xmaxInput.value}]:</strong> ${formatNumber(info.area, 6)}`);
-      }
-      if (info.systemSummary) rows.push(`<strong>System:</strong> ${info.systemSummary}`);
-      if (info.matrixSummary) rows.push(`<strong>Matrix result:</strong> ${info.matrixSummary}`);
-      if (info.equationSolutions) rows.push(info.equationSolutions);
-      if (!rows.length) rows.push('No analysis available for this input.');
-      analysisList.innerHTML = rows.map((r) => `<li>${r}</li>`).join('');
-    }
-
-    function collectVariables(str) {
-      const names = new Set();
-      const rx = /[A-Za-z]\w*/g;
-      const ignore = new Set([
-        'sin',
-        'cos',
-        'tan',
-        'log',
-        'ln',
-        'exp',
-        'sqrt',
-        'abs',
-        'pow',
-        'min',
-        'max',
-        'pi',
-        'e',
-      ]);
-      let m;
-      while ((m = rx.exec(str)) !== null) {
-        const name = m[0];
-        if (ignore.has(name.toLowerCase())) continue;
-        names.add(name);
-      }
-      return names;
-    }
-
-    function solveLinearSystem(equations) {
-      const varSet = new Set();
-      equations.forEach((eq) => {
-        collectVariables(eq.left).forEach((v) => varSet.add(v));
-        collectVariables(eq.right).forEach((v) => varSet.add(v));
-      });
-      const variables = Array.from(varSet);
-      if (!variables.length || variables.length > equations.length) return null;
-
-      const A = [];
-      const b = [];
-      equations.forEach((eq) => {
-        const zeroScope = Object.fromEntries(variables.map((v) => [v, 0]));
-        const c0 = eq.compiled.evaluate(zeroScope);
-        const row = variables.map((v) => {
-          const scope = { ...zeroScope, [v]: 1 };
-          return eq.compiled.evaluate(scope) - c0;
-        });
-        A.push(row);
-        b.push(-c0);
-      });
-
-      try {
-        const solution = math.lusolve(A, b).map((r) => r[0]);
-        const summary = variables.map((v, i) => `${v} = ${formatNumber(solution[i], 6)}`).join(', ');
-        return { variables, solution, summary };
-      } catch (err) {
-        return null;
-      }
     }
 
     function updateValueResult(primaryItem) {
@@ -788,7 +657,7 @@
           return;
         }
         if (primaryItem.type === 'equation') {
-          valueResult.textContent = 'Solutions shown in Analysis.';
+          valueResult.textContent = 'Solutions are marked on the plot; use Evaluate/Solve to list them here.';
           return;
         }
         const x0 = Number(evalInput.value);
@@ -891,7 +760,7 @@
 
           functionData.push({ item, xs, ys, badPoints, matrixSummary });
           if (matrixSummary) {
-            badNotes.push('Matrix result shown in Analysis; not plottable as a line.');
+            badNotes.push('Matrix result cannot be plotted as a line.');
           }
 
           traces.push({
@@ -967,59 +836,6 @@
         }
       }
 
-      // Tangent line at evalX for primary function
-      let derivativeExpr = null;
-      let slope = null;
-      if (primaryFunc) {
-        const x0 = Number(evalInput.value);
-        try {
-          const dNode = math.derivative(primaryFunc.item.base || primaryFunc.item.raw, 'x');
-          derivativeExpr = dNode.toString();
-          slope = dNode.evaluate({ x: x0 });
-          const y0 = primaryFunc.item.compiled.evaluate({ x: x0 });
-          const tangentYs = xs.map((x) => slope * (x - x0) + y0);
-          traces.push({
-            x: xs,
-            y: tangentYs,
-            mode: 'lines',
-            name: 'Tangent',
-            line: { color: '#f6c177', width: 2, dash: 'dash' },
-            hoverinfo: 'skip',
-          });
-        } catch (err) {
-          // ignore derivative failures (e.g., non-differentiable input)
-        }
-      }
-
-      // Area under primary function
-      let areaVal = null;
-      if (primaryFunc) {
-        areaVal = trapz(primaryFunc.xs, primaryFunc.ys);
-        traces.push({
-          x: primaryFunc.xs,
-          y: primaryFunc.ys,
-          mode: 'lines',
-          line: { color: 'rgba(124, 240, 197, 0.001)' },
-          fill: 'tozeroy',
-          fillcolor: 'rgba(124, 240, 197, 0.12)',
-          name: 'Area',
-          hoverinfo: 'skip',
-          showlegend: false,
-        });
-      }
-
-      // System of equations solver (linear)
-      let systemSummary = null;
-      if (equationData.length >= 2) {
-        const system = solveLinearSystem(equationData.map((e) => e.item));
-        if (system) {
-          systemSummary = system.summary;
-        }
-      }
-
-      // Matrix summary if any
-      const matrixSummary = functionData.find((f) => f.matrixSummary)?.matrixSummary || null;
-
       const layout = {
         margin: { l: 50, r: 20, t: 10, b: 40 },
         paper_bgcolor: 'rgba(0,0,0,0)',
@@ -1054,35 +870,6 @@
       const warn = badNotes.length ? badNotes.join(' ') : '';
       setNotice(warn);
 
-      lastGraph = {
-        xs,
-        functionData,
-        equationData,
-        intersections,
-        areaVal,
-        derivativeExpr,
-        slope,
-      };
-
-      renderAnalysis({
-        derivativeExpr,
-        slope,
-        evalX: Number(evalInput.value),
-        roots: primaryRoots,
-        intersections,
-        area: areaVal,
-        systemSummary,
-        matrixSummary,
-        equationSolutions:
-          equationData.length && equationData[0].roots
-            ? `Equation solutions: ${
-                equationData[0].roots.length
-                  ? equationData[0].roots.map((r) => formatNumber(r, 6)).join(', ')
-                  : 'none in range'
-              }`
-            : null,
-      });
-
       updateValueResult(primaryFunc?.item || equationData[0]?.item || null);
     }
 
@@ -1096,8 +883,6 @@
       gridOn = false;
       gridToggle.textContent = 'Grid On';
       compiledItems = [];
-      lastGraph = null;
-      analysisList.innerHTML = '<li>Plot to see analysis.</li>';
       setNotice('');
       plotGraph();
     }
@@ -1131,8 +916,6 @@
 
     exprInput.addEventListener('input', () => {
       compiledItems = [];
-      lastGraph = null;
-      analysisList.innerHTML = '<li>Plot to see analysis.</li>';
       setNotice('');
     });
 
